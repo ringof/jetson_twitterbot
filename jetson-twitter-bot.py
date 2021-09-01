@@ -41,7 +41,7 @@ nltk.download('stopwords')
 STOP_WORDS = set(stopwords.words('english'))
 
 DIR = os.getcwd()
-if not os.path.isdir('./files'):
+if not os.path.isdir('./data'):
     os.makedirs('data')
 DIR = DIR + '/data'
 
@@ -106,7 +106,7 @@ def generate(words):
     X = X/float(vocab_len)
     y = utils.to_categorical(y_data)
 
-    return X, y, x_data, chars
+    return X, y, x_data, chars, vocab_len
     #premodeling(X, y)
     #trainer(x_data, CHARS)
 
@@ -118,34 +118,15 @@ def premodeling(X, y):
     filename = 'model.h5'
     global FILENAME
     FILENAME = filename
-    if path.exists('model.json'):
-        json_file = open('model.json', 'r')
-        loaded_model_json = json_file.read()
-        loaded_model = model_from_json(loaded_model_json)
-        loaded_model.load_weights('model.h5')
-        loaded_model.compile(loss='categorical_crossentropy', optimizer='rmsprop')
-        filepath = 'model.h5'
-        checkpoint = ModelCheckpoint(filepath, monitor='loss', verbose=1, \
-                                     save_best_only=True, mode='min')
-        json_file.close()
-        with tf.device('/gpu:0'):
-            MODEL.fit(X, y, epochs=7, batch_size=8, callbacks=checkpoint)
-            MODEL.load_weights(FILENAME)
-            MODEL.compile(loss='categorical_crossentropy', optimizer='rmsprop')
-
-        model_json = MODEL.to_json()
-
-        with open('model.json', 'w') as json_file:
-            json_file.write(model_json)
-    else:
+    if not path.exists('model.json'):
         modeling(X, y)
 
 def modeling(X, y):
-    MODEL.add(LSTM(224, input_shape=(X.shape[1], X.shape[2]), return_sequences=True))
+    MODEL.add(LSTM(180, input_shape=(X.shape[1], X.shape[2]), return_sequences=True))
     MODEL.add(Dropout(0.6))
-    MODEL.add(LSTM(224, return_sequences=True))
+    MODEL.add(LSTM(180, return_sequences=True))
     MODEL.add(Dropout(0.6))
-    MODEL.add(LSTM(224))
+    MODEL.add(LSTM(180))
     MODEL.add(Dropout(0.4))
     MODEL.add(Dense(y.shape[1], activation='softmax'))
     optimizer = RMSprop(lr=0.001)
@@ -162,21 +143,70 @@ def modeling(X, y):
     with open('model.json', 'w') as json_file:
         json_file.write(model_json)
 
-def trainer(x_data, chars):
+def initializer(x_data, chars):
     """
     This trains the model for generating Tweets.
     """
-    print('Training the model...')
-    global NUM_TO_CHAR
-    NUM_TO_CHAR = dict((i, c) for i, c in enumerate(chars))
+    print('Random seed created...')
+    char_index = dict((i, c) for i, c in enumerate(chars))
     start = np.random.randint(0, len(x_data) -1)
     pattern = x_data[start]
-    print('Random Seed: Created\n\t')
-    #tweet_creator(pattern)
+    return pattern, char_index
+
+def tweet_creator(seed, vocab_len, words, char_index):
+    """
+    This is where the magic happens and the tweets are created.
+    """
+    chars = sorted(words)
+    int_to_char = dict((i, c) for i, c in enumerate(str(chars)))
+    print('Initializing the process to create a tweet...\n\n')
+    for i in range(2):
+        x = np.reshape(seed, (1, len(seed), 1))
+        x = x / float(vocab_len)
+        prediction = MODEL.predict(x, verbose=1)
+        index = np.argmax(prediction)
+        result = [char_index[value] for value in seed]
+        seq_in = [int_to_char[value] for value in seed]
+        result = ''.join([str(itemInResult) for itemInResult in result])
+        result = result.split(' , ')
+        seed.append(index)
+        seed = seed[1:len(seed)]
+    return seed
+
+def cleanup(pattern, char_index):
+    """
+    This module cleans up the proposed tweet
+    """
+    logic_one = pattern[:40]
+    logic_two = str([char_index[value] for value in logic_one])
+    logic_two = re.sub(r"\'\,\s\'", " ", str(logic_two))
+    logic_two = re.sub(r"https\:\/\/t\.co\/\S+", "", str(logic_two))
+    logic_two = re.sub(r"https\s\:\s", "", str(logic_two))
+    logic_two = re.sub(r"\/\/t\.co\/\S+", "", str(logic_two))
+    logic_two = re.sub(r"\[", "", str(logic_two))
+    logic_two = re.sub(r"\]", "", str(logic_two))
+    logic_two = re.sub(r"\@\S+", "", str(logic_two))
+    logic_two = re.sub(r"\#\S+", "", str(logic_two))
+    logic_two = re.sub(r"\\n", "", str(logic_two))
+    logic_two = re.sub(r"\"", "", str(logic_two))
+    logic_two = re.sub(r"\\", "", str(logic_two))
+    logic_two = re.sub(r"\s\!", "!", str(logic_two))
+    logic_two = re.sub(r"\(", "", str(logic_two))
+    logic_two = re.sub(r"\)", "", str(logic_two))
+    logic_two = re.sub(r"\s\:", ":", str(logic_two))
+    logic_two = re.sub(r"https", "", str(logic_two))
+    logic_two = re.sub(r"\'", "", str(logic_two))
+    logic_two = re.sub(r"\"", "", str(logic_two))
+    logic_two = re.sub(r"\,", "", str(logic_two))
+    logic_two = re.sub(r"\`", "", str(logic_two))
+    print(str(''.join([str(itemInLogic_two) for itemInLogic_two in logic_two])))
 
 #main
 MODEL = Sequential()
 words, inter = sorter(tweet_reader('tweets.txt'))
-X, y, x_data, chars = generate(words)
+X, y, x_data, chars, vocab_len = generate(words)
 premodeling(X, y)
-trainer(x_data, chars)
+seed, char_index = initializer(x_data, chars)
+tweet = tweet_creator(seed, vocab_len, words, char_index)
+cleaned_tweet = cleanup(tweet, char_index)
+print("Done!")
